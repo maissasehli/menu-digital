@@ -1,0 +1,15 @@
+{
+  "menu": {
+    "search": "Rechercher un plat…",
+    "allCategories": "Tout",
+    "available": "Disponible",
+    "noItems": "Aucun plat disponible.",
+    "currency": "TND"
+  },
+  "dashboard": {
+    "welcome": "Bonjour",
+    "categories": "Catégories",
+    "items": "Plats",
+    "logout": "Déconnexion"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "menu": {
+    "search": "Search a dish…",
+    "allCategories": "All",
+    "available": "Available",
+    "noItems": "No dishes available.",
+    "currency": "TND"
+  },
+  "dashboard": {
+    "welcome": "Hello",
+    "categories": "Categories",
+    "items": "Items",
+    "logout": "Sign out"
+  }
+}
