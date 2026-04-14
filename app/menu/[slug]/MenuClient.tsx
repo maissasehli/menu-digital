@@ -1,36 +1,79 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import type { Restaurant, Category, Item } from '@/types'
 
 type Lang = 'fr' | 'ar' | 'en'
 
-const translations = {
-  fr: {
-    search: 'Rechercher un plat…',
-    available: 'Disponible',
-    noItems: 'Aucun plat disponible dans cette catégorie.',
-    allCats: 'Tout',
-    tnd: 'TND',
-    poweredBy: 'Propulsé par MenuDigital',
-  },
-  ar: {
-    search: 'ابحث عن طبق…',
-    available: 'متاح',
-    noItems: 'لا توجد أطباق متاحة.',
-    allCats: 'الكل',
-    tnd: 'د.ت',
-    poweredBy: 'مدعوم من MenuDigital',
-  },
-  en: {
-    search: 'Search a dish…',
-    available: 'Available',
-    noItems: 'No dishes available in this category.',
-    allCats: 'All',
-    tnd: 'TND',
-    poweredBy: 'Powered by MenuDigital',
-  },
+type Translatable = {
+  name: string
+  name_ar?: string | null
+  name_en?: string | null
 }
+
+const T = {
+  fr: { search: 'Rechercher un plat…', all: 'Tout le menu', tnd: 'TND', noItems: 'Aucun résultat.', available: 'Disponible', by: 'Propulsé par', brand: 'MENUDIGITAL' },
+  ar: { search: 'ابحث عن طبق…', all: 'القائمة الكاملة', tnd: 'د.ت', noItems: 'لا توجد نتائج.', available: 'متاح', by: 'مدعوم من', brand: 'MENUDIGITAL' },
+  en: { search: 'Search a dish…', all: 'Full menu', tnd: 'TND', noItems: 'No results.', available: 'Available', by: 'Powered by', brand: 'MENUDIGITAL' },
+}
+
+const FONTS_CSS = `
+  @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Crimson+Pro:ital,wght@0,300;0,400;1,300;1,400&family=Inter:wght@300;400;500&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+
+  .mh-tabs { display: flex; overflow-x: auto; scrollbar-width: none; gap: 4px; padding-bottom: 14px; }
+  .mh-tabs::-webkit-scrollbar { display: none; }
+
+  .mi { animation: up .35s ease both; }
+  .mi-img img { transition: transform .5s; }
+  .mi:hover .mi-img img { transform: scale(1.08); }
+  .mi-zoom { position: absolute; inset: 0; background: rgba(0,0,0,0); display: flex; align-items: center; justify-content: center; opacity: 0; transition: all .25s; }
+  .mi:hover .mi-zoom { background: rgba(0,0,0,.25); opacity: 1; }
+
+  .mi-desc { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+  @keyframes up      { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  @keyframes fadeIn  { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes scaleIn { from { opacity: 0; transform: scale(.93); } to { opacity: 1; transform: scale(1); } }
+
+  @media (max-width: 480px) {
+    .mi-img-box, .mi-placeholder { width: 85px !important; min-height: 85px !important; }
+  }
+`
+
+const SearchIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="11" cy="11" r="8" />
+    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+  </svg>
+)
+
+const ZoomIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+    stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="11" cy="11" r="8" />
+    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    <line x1="11" y1="8" x2="11" y2="14" />
+    <line x1="8" y1="11" x2="14" y2="11" />
+  </svg>
+)
+
+const PlaceholderIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#b0a592" strokeWidth="1.5">
+    <rect x="3" y="3" width="18" height="18" rx="2" />
+    <circle cx="8.5" cy="8.5" r="1.5" />
+    <path d="M21 15l-5-5L5 21" />
+  </svg>
+)
+
+const padNum = (n: number) => String(n).padStart(2, '0')
 
 export default function MenuClient({
   restaurant,
@@ -41,391 +84,539 @@ export default function MenuClient({
   categories: Category[]
   items: Item[]
 }) {
-  const [lang, setLang] = useState<Lang>('fr')
+  const [lang, setLang]                     = useState<Lang>('fr')
   const [activeCategory, setActiveCategory] = useState<string>('all')
-  const [search, setSearch] = useState('')
+  const [search, setSearch]                 = useState('')
+  const [lightbox, setLightbox]             = useState<Item | null>(null)
+  const [scrolled, setScrolled]             = useState(false)
+  const tabsRef                             = useRef<HTMLDivElement>(null)
+  const headerRef                           = useRef<HTMLElement>(null)
 
-  const dir = lang === 'ar' ? 'rtl' : 'ltr'
-  const tx = translations[lang]
+  const tx      = T[lang]
+  const isRtl   = lang === 'ar'
+  const dir     = isRtl ? 'rtl' : 'ltr'
+  const primary = restaurant.primary_color || '#8a6c3a'
 
-  const getName = (item: Item | Category): string => {
-    if (lang === 'ar' && 'name_ar' in item && item.name_ar) return item.name_ar
-    if (lang === 'en' && 'name_en' in item && item.name_en) return item.name_en
-    return item.name
+  // Derived colors
+  const acc2 = primary + '22'
+  const acc3 = primary + '55'
+
+  // Design tokens as JS objects (no CSS classes for stateful things)
+  const C = {
+    bg:      '#f5f0e8',
+    s1:      '#ede8de',
+    s2:      '#e4ddd1',
+    s3:      '#d9d1c4',
+    border:  'rgba(100,80,50,0.10)',
+    border2: 'rgba(100,80,50,0.18)',
+    border3: 'rgba(100,80,50,0.28)',
+    txt:     '#1c1610',
+    muted:   '#7a6e5f',
+    dim:     '#b0a592',
+    green:   '#3a7d57',
   }
 
-  const filtered = items.filter((item) => {
-    const matchCat =
-      activeCategory === 'all' || item.category_id === activeCategory
-    const matchSearch = getName(item)
-      .toLowerCase()
-      .includes(search.toLowerCase())
-    return matchCat && matchSearch
+  /* scroll shadow */
+  useEffect(() => {
+    const fn = () => setScrolled(window.scrollY > 40)
+    window.addEventListener('scroll', fn, { passive: true })
+    return () => window.removeEventListener('scroll', fn)
+  }, [])
+
+  /* lock body when lightbox open */
+  useEffect(() => {
+    document.body.style.overflow = lightbox ? 'hidden' : ''
+    return () => { document.body.style.overflow = '' }
+  }, [lightbox])
+
+  /* close lightbox on Escape */
+  useEffect(() => {
+    const fn = (e: KeyboardEvent) => { if (e.key === 'Escape') setLightbox(null) }
+    window.addEventListener('keydown', fn)
+    return () => window.removeEventListener('keydown', fn)
+  }, [])
+
+  const getName = useCallback((obj: Translatable) => {
+    if (lang === 'ar') return obj.name_ar || obj.name
+    if (lang === 'en') return obj.name_en || obj.name
+    return obj.name
+  }, [lang])
+
+  const filtered = items.filter(i =>
+    getName(i).toLowerCase().includes(search.toLowerCase())
+  )
+
+  const groups = categories
+    .map((cat, ci) => ({
+      cat,
+      ci,
+      dishes: filtered.filter(i => i.category_id === cat.id),
+    }))
+    .filter(g => g.dishes.length > 0)
+
+  const scrollTab = (id: string) => {
+    setActiveCategory(id)
+
+    const btn = tabsRef.current?.querySelector<HTMLElement>(`[data-id="${id}"]`)
+    btn?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })
+
+    if (id === 'all') {
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+      return
+    }
+
+    const section      = document.getElementById(`section-${id}`)
+    const headerHeight = headerRef.current?.clientHeight ?? 0
+    if (!section) return
+
+    const top = section.getBoundingClientRect().top + window.scrollY - headerHeight - 16
+    window.scrollTo({ top, behavior: 'smooth' })
+  }
+
+  // ── Inline style objects ─────────────────────────────────────────────────
+
+  const sHeader: React.CSSProperties = {
+    background: C.bg,
+    borderBottom: `1px solid ${scrolled ? C.border2 : C.border}`,
+    boxShadow: scrolled ? '0 6px 32px rgba(100,80,50,0.10)' : 'none',
+    position: 'sticky', top: 0, zIndex: 100,
+    transition: 'border-color .3s, box-shadow .3s',
+  }
+
+  const sHeaderInner: React.CSSProperties = {
+    maxWidth: 760, margin: '0 auto', padding: '16px 20px 0',
+  }
+
+  const sHeaderTop: React.CSSProperties = {
+    display: 'flex', alignItems: 'center', gap: 14, paddingBottom: 14,
+  }
+
+  const sLogo: React.CSSProperties = {
+    width: 44, height: 44, flexShrink: 0,
+    borderRadius: 10, background: C.s2,
+    border: `1px solid ${C.border2}`,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    overflow: 'hidden',
+    fontFamily: "'Bebas Neue', Impact, sans-serif",
+    fontSize: 24, letterSpacing: '.05em', color: primary,
+  }
+
+  const sName: React.CSSProperties = {
+    fontFamily: "'Bebas Neue', Impact, sans-serif",
+    fontSize: 20, letterSpacing: '.08em',
+    color: C.txt, lineHeight: 1,
+    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+  }
+
+  const sDesc: React.CSSProperties = {
+    fontSize: 10.5, color: C.muted,
+    letterSpacing: '.18em', textTransform: 'uppercase',
+    marginTop: 5, fontWeight: 300,
+    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+  }
+
+  const sLangs: React.CSSProperties = {
+    display: 'flex', gap: 1,
+    background: C.s2, border: `1px solid ${C.border2}`,
+    borderRadius: 8, padding: 3, flexShrink: 0,
+  }
+
+  const sLangBtn = (active: boolean): React.CSSProperties => ({
+    background: active ? primary : 'transparent',
+    border: 'none',
+    padding: '5px 12px', borderRadius: 6,
+    fontSize: 10, fontWeight: 500, letterSpacing: '.12em',
+    textTransform: 'uppercase',
+    color: active ? '#fff' : C.muted,
+    cursor: 'pointer',
+    fontFamily: "'Inter', system-ui, sans-serif",
+    transition: 'all .2s',
   })
 
-  const primaryColor = restaurant.primary_color || '#FF6B35'
+  const sSearchWrap: React.CSSProperties = {
+    paddingBottom: 12, position: 'relative',
+  }
+
+  const sSearchIcon: React.CSSProperties = {
+    position: 'absolute', top: '50%', transform: 'translateY(-50%)',
+    pointerEvents: 'none', color: C.dim,
+    ...(isRtl ? { right: 14 } : { left: 14 }),
+  }
+
+  const sInput: React.CSSProperties = {
+    width: '100%',
+    background: C.s1, border: `1px solid ${C.border}`,
+    borderRadius: 8, fontSize: 13, color: C.txt,
+    fontFamily: "'Inter', system-ui, sans-serif",
+    fontWeight: 300, outline: 'none',
+    padding: '10px 14px',
+    transition: 'border-color .2s',
+    ...(isRtl ? { paddingRight: 38, paddingLeft: 14 } : { paddingLeft: 38, paddingRight: 14 }),
+  }
+
+  const sTabBtn = (active: boolean): React.CSSProperties => ({
+    flexShrink: 0,
+    background: active ? primary : 'transparent',
+    border: `1px solid ${active ? primary : C.border}`,
+    borderRadius: 6,
+    padding: '6px 16px', fontSize: 11,
+    fontWeight: active ? 500 : 400,
+    letterSpacing: '.1em', textTransform: 'uppercase',
+    color: active ? '#fff' : C.muted,
+    cursor: 'pointer',
+    fontFamily: "'Inter', system-ui, sans-serif",
+    transition: 'all .2s', whiteSpace: 'nowrap',
+  })
+
+  const sMain: React.CSSProperties = {
+    maxWidth: 760, margin: '0 auto', padding: '36px 20px 100px',
+  }
+
+  const sGroup: React.CSSProperties = { marginBottom: 52 }
+
+  const sGroupHead: React.CSSProperties = {
+    display: 'flex', alignItems: 'center', gap: 20, marginBottom: 28,
+  }
+
+  const sGroupNum: React.CSSProperties = {
+    fontFamily: "'Bebas Neue', Impact, sans-serif",
+    fontSize: 64, lineHeight: 1,
+    color: 'rgba(100,80,50,0.10)', flexShrink: 0,
+    userSelect: 'none', letterSpacing: '-.02em',
+  }
+
+  const sGroupInfo: React.CSSProperties = {
+    flex: 1, minWidth: 0,
+    borderLeft: `2px solid ${primary}`,
+    paddingLeft: 16,
+  }
+
+  const sGroupTitle: React.CSSProperties = {
+    fontFamily: "'Bebas Neue', Impact, sans-serif",
+    fontSize: 28, letterSpacing: '.1em', color: C.txt, lineHeight: 1,
+  }
+
+  const sGroupCount: React.CSSProperties = {
+    fontSize: 10.5, color: C.muted,
+    letterSpacing: '.16em', textTransform: 'uppercase',
+    marginTop: 5, fontWeight: 300,
+  }
+
+  const sItem: React.CSSProperties = {
+    display: 'flex', background: C.s1,
+    border: `1px solid ${C.border}`, borderRadius: 12,
+    overflow: 'hidden', marginBottom: 2,
+    transition: 'border-color .25s, background .25s',
+  }
+
+  const sImgBox: React.CSSProperties = {
+    width: 110, minHeight: 110, flexShrink: 0,
+    overflow: 'hidden', position: 'relative',
+    background: C.s2, cursor: 'zoom-in',
+  }
+
+  const sImgStyle: React.CSSProperties = {
+    width: '100%', height: '100%', objectFit: 'cover', display: 'block',
+  }
+
+  const sPlaceholder: React.CSSProperties = {
+    width: 110, minHeight: 110, flexShrink: 0,
+    background: C.s2,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+  }
+
+  const sPhIcon: React.CSSProperties = {
+    width: 28, height: 28, borderRadius: '50%',
+    border: `1px solid ${C.border2}`,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+  }
+
+  const sBody: React.CSSProperties = {
+    flex: 1, padding: '16px 18px',
+    display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0,
+  }
+
+  const sItemName: React.CSSProperties = {
+    fontFamily: "'Crimson Pro', Georgia, serif",
+    fontSize: 18, fontWeight: 400, fontStyle: 'italic',
+    lineHeight: 1.2, color: C.txt,
+  }
+
+  const sItemDesc: React.CSSProperties = {
+    fontSize: 12, color: C.muted, lineHeight: 1.7, fontWeight: 300, flex: 1,
+  }
+
+  const sFooter: React.CSSProperties = {
+    display: 'flex', alignItems: 'center',
+    justifyContent: 'space-between', marginTop: 4,
+  }
+
+  const sPriceBlock: React.CSSProperties = {
+    display: 'flex', alignItems: 'baseline', gap: 5,
+  }
+
+  const sPrice: React.CSSProperties = {
+    fontFamily: "'Bebas Neue', Impact, sans-serif",
+    fontSize: 22, letterSpacing: '.03em', color: primary,
+  }
+
+  const sCurrency: React.CSSProperties = {
+    fontSize: 10, color: C.muted,
+    letterSpacing: '.12em', textTransform: 'uppercase', fontWeight: 300,
+  }
+
+  const sAvail: React.CSSProperties = {
+    display: 'flex', alignItems: 'center', gap: 6,
+  }
+
+  const sDot: React.CSSProperties = {
+    width: 6, height: 6, borderRadius: '50%',
+    background: C.green, flexShrink: 0,
+  }
+
+  const sAvailLbl: React.CSSProperties = {
+    fontSize: 10, color: C.green,
+    letterSpacing: '.1em', textTransform: 'uppercase', fontWeight: 400,
+  }
+
+  const sEmpty: React.CSSProperties = {
+    textAlign: 'center', padding: '80px 20px',
+    fontFamily: "'Crimson Pro', Georgia, serif",
+    fontSize: 22, fontStyle: 'italic', color: C.dim,
+  }
+
+  const sLightbox: React.CSSProperties = {
+    position: 'fixed', inset: 0, zIndex: 300,
+    background: 'rgba(20,15,10,0.88)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    padding: 24, animation: 'fadeIn .2s ease',
+  }
+
+  const sLbClose: React.CSSProperties = {
+    position: 'absolute', top: 20, right: 20,
+    width: 40, height: 40, borderRadius: '50%',
+    background: C.s2, border: `1px solid ${C.border2}`,
+    color: C.muted, fontSize: 16, cursor: 'pointer',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    fontFamily: "'Inter', system-ui, sans-serif",
+    transition: 'all .2s',
+  }
+
+  const sLbImg: React.CSSProperties = {
+    maxWidth: 'min(88vw, 580px)', maxHeight: '78vh',
+    borderRadius: 10, objectFit: 'contain',
+    animation: 'scaleIn .25s ease',
+  }
+
+  const sLbCap: React.CSSProperties = {
+    position: 'absolute', bottom: 28, left: '50%', transform: 'translateX(-50%)',
+    fontFamily: "'Crimson Pro', Georgia, serif",
+    fontSize: 16, fontStyle: 'italic',
+    color: C.txt, background: C.bg,
+    border: `1px solid ${C.border2}`,
+    padding: '8px 20px', borderRadius: 8, whiteSpace: 'nowrap',
+  }
+
+  const sPageFooter: React.CSSProperties = {
+    position: 'fixed', bottom: 0, left: 0, right: 0,
+    background: C.bg, borderTop: `1px solid ${C.border}`,
+    padding: '11px 20px',
+    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+  }
+
+  const sFooterDot: React.CSSProperties = {
+    width: 4, height: 4, borderRadius: '50%',
+    background: primary, opacity: .5,
+  }
+
+  const sFooterBy: React.CSSProperties = {
+    fontSize: 10, color: C.dim,
+    letterSpacing: '.14em', textTransform: 'uppercase', fontWeight: 300,
+  }
+
+  const sFooterBrand: React.CSSProperties = {
+    fontFamily: "'Bebas Neue', Impact, sans-serif",
+    fontSize: 13, letterSpacing: '.12em', color: primary,
+  }
+
+  // ────────────────────────────────────────────────────────────────────────
 
   return (
     <>
-      <style>{`
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        html { scroll-behavior: smooth; }
-        body { background: #0a0a0a; }
+      <style>{FONTS_CSS}</style>
 
-        .menu-root {
-          min-height: 100vh;
-          background: #0a0a0a;
-          color: #fff;
-          font-family: ${lang === 'ar'
-            ? "'Cairo', 'Noto Sans Arabic', sans-serif"
-            : "'Inter', -apple-system, BlinkMacSystemFont, sans-serif"};
-        }
+      <div dir={dir} style={{ background: C.bg, color: C.txt, fontFamily: "'Inter', system-ui, sans-serif", minHeight: '100vh' }}>
 
-        .menu-header {
-          position: sticky;
-          top: 0;
-          z-index: 40;
-          background: rgba(10,10,10,0.92);
-          backdrop-filter: blur(20px);
-          -webkit-backdrop-filter: blur(20px);
-          border-bottom: 1px solid rgba(255,255,255,0.07);
-          padding: 14px 16px 0;
-        }
+        {/* ── HEADER ── */}
+        <header ref={headerRef} style={sHeader}>
+          <div style={sHeaderInner}>
 
-        .header-top {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          margin-bottom: 14px;
-          gap: 12px;
-        }
-
-        .resto-info {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          min-width: 0;
-          flex: 1;
-        }
-
-        .resto-avatar {
-          width: 44px; height: 44px; min-width: 44px;
-          border-radius: 14px;
-          display: flex; align-items: center; justify-content: center;
-          font-size: 20px; font-weight: 900; color: #fff; flex-shrink: 0;
-          background: linear-gradient(135deg, ${primaryColor}, #9B59B6);
-        }
-
-        .resto-name {
-          font-size: 17px; font-weight: 800; letter-spacing: -0.4px;
-          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-        }
-
-        .resto-desc {
-          font-size: 12px; color: rgba(255,255,255,0.38); margin-top: 2px;
-          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-        }
-
-        .lang-switcher {
-          display: flex; gap: 3px;
-          background: rgba(255,255,255,0.06);
-          border: 1px solid rgba(255,255,255,0.1);
-          border-radius: 100px; padding: 3px; flex-shrink: 0;
-        }
-
-        .lang-btn {
-          background: none; border: none; border-radius: 100px;
-          padding: 5px 10px; font-size: 10px; font-weight: 700;
-          letter-spacing: 0.06em; color: rgba(255,255,255,0.35);
-          cursor: pointer; transition: all 0.2s; font-family: inherit;
-        }
-
-        .lang-btn.active {
-          background: linear-gradient(135deg, ${primaryColor}, #C8933A);
-          color: #fff;
-        }
-
-        .search-wrap { position: relative; margin-bottom: 14px; }
-
-        .search-icon {
-          position: absolute;
-          left: ${dir === 'rtl' ? 'auto' : '13px'};
-          right: ${dir === 'rtl' ? '13px' : 'auto'};
-          top: 50%; transform: translateY(-50%);
-          color: rgba(255,255,255,0.25); pointer-events: none;
-        }
-
-        .search-input {
-          width: 100%;
-          background: rgba(255,255,255,0.05);
-          border: 1px solid rgba(255,255,255,0.09);
-          border-radius: 12px;
-          padding: ${dir === 'rtl' ? '11px 40px 11px 14px' : '11px 14px 11px 40px'};
-          font-size: 14px; color: #fff; outline: none;
-          font-family: inherit; transition: border-color 0.2s, background 0.2s;
-        }
-
-        .search-input::placeholder { color: rgba(255,255,255,0.22); }
-        .search-input:focus {
-          border-color: rgba(255,107,53,0.45);
-          background: rgba(255,107,53,0.04);
-        }
-
-        .cat-tabs {
-          display: flex; gap: 8px; overflow-x: auto;
-          padding-bottom: 14px; scrollbar-width: none; -ms-overflow-style: none;
-        }
-        .cat-tabs::-webkit-scrollbar { display: none; }
-
-        .cat-tab {
-          flex-shrink: 0;
-          background: rgba(255,255,255,0.05);
-          border: 1px solid rgba(255,255,255,0.09);
-          border-radius: 100px; padding: 7px 16px;
-          font-size: 13px; font-weight: 600;
-          color: rgba(255,255,255,0.4); cursor: pointer;
-          transition: all 0.2s; font-family: inherit; white-space: nowrap;
-        }
-
-        .cat-tab:hover { color: rgba(255,255,255,0.75); border-color: rgba(255,255,255,0.15); }
-        .cat-tab.active {
-          background: rgba(255,107,53,0.15);
-          border-color: rgba(255,107,53,0.4);
-          color: ${primaryColor};
-        }
-
-        .menu-main { max-width: 700px; margin: 0 auto; padding: 20px 14px 100px; }
-
-        .result-count {
-          font-size: 12px; color: rgba(255,255,255,0.25);
-          margin-bottom: 14px; font-weight: 600;
-          letter-spacing: 0.06em; text-transform: uppercase; padding-left: 2px;
-        }
-
-        .items-list { display: flex; flex-direction: column; gap: 10px; }
-
-        .item-card {
-          display: flex;
-          border: 1px solid rgba(255,255,255,0.08);
-          background: rgba(255,255,255,0.03);
-          border-radius: 16px; overflow: hidden;
-          transition: border-color 0.2s, background 0.2s, transform 0.2s;
-          animation: fadeIn 0.3s ease both;
-        }
-
-        .item-card:hover {
-          border-color: rgba(255,255,255,0.14);
-          background: rgba(255,255,255,0.05);
-          transform: translateY(-1px);
-        }
-
-        .item-img-wrap {
-          width: 96px; min-height: 96px; flex-shrink: 0;
-          overflow: hidden; background: rgba(255,255,255,0.04);
-        }
-
-        .item-img { width: 100%; height: 100%; object-fit: cover; display: block; }
-
-        .item-img-placeholder {
-          width: 96px; min-height: 96px; flex-shrink: 0;
-          display: flex; align-items: center; justify-content: center;
-          font-size: 28px;
-          background: rgba(255,255,255,0.03);
-          border-right: 1px solid rgba(255,255,255,0.06);
-        }
-
-        .item-body {
-          flex: 1; padding: 14px 16px;
-          display: flex; flex-direction: column;
-          justify-content: space-between; gap: 8px; min-width: 0;
-        }
-
-        .item-name { font-size: 15px; font-weight: 700; color: rgba(255,255,255,0.92); line-height: 1.3; }
-
-        .item-desc {
-          font-size: 12px; color: rgba(255,255,255,0.35); line-height: 1.5;
-          display: -webkit-box; -webkit-line-clamp: 2;
-          -webkit-box-orient: vertical; overflow: hidden;
-        }
-
-        .item-footer {
-          display: flex; align-items: center;
-          justify-content: space-between; gap: 8px;
-        }
-
-        .item-price {
-          font-size: 16px; font-weight: 800; letter-spacing: -0.3px;
-          background: linear-gradient(90deg, ${primaryColor}, #C8933A);
-          -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-          background-clip: text;
-        }
-
-        .item-avail {
-          font-size: 10px; font-weight: 700;
-          background: rgba(34,197,94,0.1);
-          border: 1px solid rgba(34,197,94,0.25);
-          color: #22c55e; padding: 3px 10px;
-          border-radius: 100px; white-space: nowrap;
-        }
-
-        .empty-state {
-          display: flex; flex-direction: column; align-items: center;
-          gap: 12px; padding: 60px 20px; text-align: center;
-        }
-        .empty-icon { font-size: 40px; }
-        .empty-text { font-size: 14px; color: rgba(255,255,255,0.3); line-height: 1.6; max-width: 280px; }
-
-        .menu-footer {
-          position: fixed; bottom: 0; left: 0; right: 0;
-          background: rgba(10,10,10,0.9);
-          backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-          border-top: 1px solid rgba(255,255,255,0.06);
-          padding: 12px 16px; text-align: center;
-          font-size: 11px; color: rgba(255,255,255,0.2);
-          font-weight: 500; letter-spacing: 0.04em;
-        }
-
-        .footer-brand {
-          background: linear-gradient(90deg, ${primaryColor}, #C8933A);
-          -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-          background-clip: text; font-weight: 700;
-        }
-
-        @media (max-width: 480px) {
-          .resto-name { font-size: 15px; }
-          .item-img-wrap, .item-img-placeholder { width: 80px; min-height: 80px; }
-          .item-name { font-size: 14px; }
-          .item-price { font-size: 14px; }
-          .menu-main { padding: 16px 12px 100px; }
-        }
-
-        @keyframes fadeIn {
-          from { opacity: 0; transform: translateY(8px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-      `}</style>
-
-      <div className="menu-root" dir={dir}>
-        <header className="menu-header">
-          <div className="header-top">
-            <div className="resto-info">
-              <div className="resto-avatar">
-                {restaurant.name.charAt(0).toUpperCase()}
+            {/* top row */}
+            <div style={sHeaderTop}>
+              <div style={sLogo}>
+                {restaurant.logo_url
+                  ? <img src={restaurant.logo_url} alt={restaurant.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  : restaurant.name.charAt(0).toUpperCase()
+                }
               </div>
-              <div style={{ minWidth: 0 }}>
-                <div className="resto-name">{restaurant.name}</div>
+
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={sName}>{restaurant.name}</div>
                 {restaurant.description && (
-                  <div className="resto-desc">{restaurant.description}</div>
+                  <div style={sDesc}>{restaurant.description}</div>
                 )}
               </div>
+
+              {/* ✅ FIX: style inline React — fonctionne sur toute IP */}
+              <div style={sLangs}>
+                {(['fr', 'ar', 'en'] as Lang[]).map(l => (
+                  <button
+                    key={l}
+                    style={sLangBtn(lang === l)}
+                    onClick={() => setLang(l)}
+                  >
+                    {l.toUpperCase()}
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="lang-switcher">
-              {(['fr', 'ar', 'en'] as Lang[]).map((l) => (
+
+            {/* search */}
+            <div style={sSearchWrap}>
+              <span style={sSearchIcon}><SearchIcon /></span>
+              <input
+                style={sInput}
+                placeholder={tx.search}
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+              />
+            </div>
+
+            {/* ✅ FIX: category tabs — style inline React */}
+            <div className="mh-tabs" ref={tabsRef}>
+              <button
+                data-id="all"
+                style={sTabBtn(activeCategory === 'all')}
+                onClick={() => scrollTab('all')}
+              >
+                {tx.all}
+              </button>
+              {categories.map(cat => (
                 <button
-                  key={l}
-                  onClick={() => setLang(l)}
-                  className={`lang-btn${lang === l ? ' active' : ''}`}
+                  key={cat.id}
+                  data-id={cat.id}
+                  style={sTabBtn(activeCategory === cat.id)}
+                  onClick={() => scrollTab(cat.id)}
                 >
-                  {l.toUpperCase()}
+                  {getName(cat)}
                 </button>
               ))}
             </div>
-          </div>
 
-          <div className="search-wrap">
-            <svg className="search-icon" width="15" height="15" viewBox="0 0 24 24"
-              fill="none" stroke="currentColor" strokeWidth="2"
-              strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="11" cy="11" r="8" />
-              <line x1="21" y1="21" x2="16.65" y2="16.65" />
-            </svg>
-            <input
-              className="search-input"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder={tx.search}
-            />
-          </div>
-
-          <div className="cat-tabs">
-            <button
-              className={`cat-tab${activeCategory === 'all' ? ' active' : ''}`}
-              onClick={() => setActiveCategory('all')}
-            >
-              {tx.allCats} ({items.length})
-            </button>
-            {categories.map((cat) => {
-              const count = items.filter((i) => i.category_id === cat.id).length
-              return (
-                <button
-                  key={cat.id}
-                  className={`cat-tab${activeCategory === cat.id ? ' active' : ''}`}
-                  onClick={() => setActiveCategory(cat.id)}
-                >
-                  {getName(cat)} ({count})
-                </button>
-              )
-            })}
           </div>
         </header>
 
-        <main className="menu-main">
-          {filtered.length > 0 && (
-            <div className="result-count">
-              {filtered.length} plat{filtered.length > 1 ? 's' : ''}
-            </div>
-          )}
-
-          {filtered.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon">🍽️</div>
-              <p className="empty-text">{tx.noItems}</p>
-            </div>
+        {/* ── MAIN ── */}
+        <main style={sMain}>
+          {groups.length === 0 ? (
+            <div style={sEmpty}>— {tx.noItems} —</div>
           ) : (
-            <div className="items-list">
-              {filtered.map((item, i) => (
-                <div
-                  key={item.id}
-                  className="item-card"
-                  style={{ animationDelay: `${i * 40}ms` }}
-                >
-                  {item.image_url ? (
-                    <div className="item-img-wrap">
-                      <img
-                        src={item.image_url}
-                        alt={getName(item)}
-                        className="item-img"
-                        loading="lazy"
-                      />
-                    </div>
-                  ) : (
-                    <div className="item-img-placeholder">🍴</div>
-                  )}
+            groups.map(({ cat, ci, dishes }) => (
+              <section key={cat.id} id={`section-${cat.id}`} style={sGroup}>
 
-                  <div className="item-body">
-                    <div>
-                      <div className="item-name">{getName(item)}</div>
-                      {item.description && (
-                        <div className="item-desc">{item.description}</div>
-                      )}
-                    </div>
-                    <div className="item-footer">
-                      <span className="item-price">
-                        {item.price} {tx.tnd}
-                      </span>
-                      <span className="item-avail">{tx.available}</span>
+                <div style={sGroupHead}>
+                  <div style={sGroupNum}>{padNum(ci + 1)}</div>
+                  <div style={sGroupInfo}>
+                    <div style={sGroupTitle}>{getName(cat).toUpperCase()}</div>
+                    <div style={sGroupCount}>
+                      {dishes.length}&nbsp;plat{dishes.length > 1 ? 's' : ''}
                     </div>
                   </div>
                 </div>
-              ))}
-            </div>
+
+                {dishes.map((item, ii) => (
+                  <div
+                    key={item.id}
+                    className="mi"
+                    style={{ ...sItem, animationDelay: `${ii * 60}ms` }}
+                  >
+                    {item.image_url ? (
+                      <div
+                        className="mi-img-box"
+                        style={sImgBox}
+                        onClick={() => setLightbox(item)}
+                        role="button"
+                        aria-label={`Agrandir ${getName(item)}`}
+                        tabIndex={0}
+                        onKeyDown={e => e.key === 'Enter' && setLightbox(item)}
+                      >
+                        <img src={item.image_url} alt={getName(item)} loading="lazy" style={sImgStyle} />
+                        <div className="mi-zoom"><ZoomIcon /></div>
+                      </div>
+                    ) : (
+                      <div className="mi-placeholder" style={sPlaceholder}>
+                        <div style={sPhIcon}><PlaceholderIcon /></div>
+                      </div>
+                    )}
+
+                    <div style={sBody}>
+                      <div style={sItemName}>{getName(item)}</div>
+                      {item.description && (
+                        <div className="mi-desc" style={sItemDesc}>{item.description}</div>
+                      )}
+                      <div style={sFooter}>
+                        <div style={sPriceBlock}>
+                          <span style={sPrice}>{Number(item.price).toFixed(3)}</span>
+                          <span style={sCurrency}>{tx.tnd}</span>
+                        </div>
+                        <div style={sAvail}>
+                          <div style={sDot} />
+                          <span style={sAvailLbl}>{tx.available}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+
+              </section>
+            ))
           )}
         </main>
 
-        <footer className="menu-footer">
-          {tx.poweredBy.split('MenuDigital')[0]}
-          <span className="footer-brand">MenuDigital</span>
+        {/* ── LIGHTBOX ── */}
+        {lightbox && (
+          <div
+            style={sLightbox}
+            onClick={() => setLightbox(null)}
+            role="dialog"
+            aria-modal="true"
+            aria-label={getName(lightbox)}
+          >
+            <button
+              style={sLbClose}
+              onClick={e => { e.stopPropagation(); setLightbox(null) }}
+              aria-label="Fermer"
+            >
+              ✕
+            </button>
+            <img
+              style={sLbImg}
+              src={lightbox.image_url!}
+              alt={getName(lightbox)}
+              onClick={e => e.stopPropagation()}
+            />
+            <div style={sLbCap}>{getName(lightbox)}</div>
+          </div>
+        )}
+
+        {/* ── FOOTER ── */}
+        <footer style={sPageFooter}>
+          <div style={sFooterDot} />
+          <span style={sFooterBy}>{tx.by}</span>
+          <span style={sFooterBrand}>{tx.brand}</span>
+          <div style={sFooterDot} />
         </footer>
+
       </div>
     </>
   )

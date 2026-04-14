@@ -13,24 +13,46 @@ export default function DashboardPage() {
   const [items, setItems] = useState<Item[]>([])
   const [loading, setLoading] = useState(true)
 
-  // ✅ CORRIGÉ : loadData déclarée AVANT useEffect avec useCallback
+  // Inline name editing
+  const [editingName, setEditingName] = useState(false)
+  const [nameInput, setNameInput] = useState('')
+  const [savingName, setSavingName] = useState(false)
+
   const loadData = useCallback(async (userId: string) => {
     let { data: resto } = await supabase
-      .from('restaurants').select('*').eq('user_id', userId).maybeSingle()
+      .from('restaurants')
+      .select('*')
+      .eq('user_id', userId)
+      .maybeSingle()
 
     if (!resto) {
       const { data: newResto } = await supabase
         .from('restaurants')
-        .insert({ user_id: userId, name: 'Mon Restaurant', slug: `restaurant-${userId.slice(0, 8)}` })
-        .select().single()
+        .insert({
+          user_id: userId,
+          name: 'Mon Restaurant',
+          slug: `restaurant-${userId.slice(0, 8)}`,
+        })
+        .select()
+        .single()
       resto = newResto
     }
 
-    if (!resto) { router.push('/login'); return }
+    if (!resto) {
+      router.push('/login')
+      return
+    }
 
     const [{ data: cats }, { data: allItems }] = await Promise.all([
-      supabase.from('categories').select('*').eq('restaurant_id', resto.id).order('position'),
-      supabase.from('items').select('*, categories!inner(restaurant_id)').eq('categories.restaurant_id', resto.id),
+      supabase
+        .from('categories')
+        .select('*')
+        .eq('restaurant_id', resto.id)
+        .order('position'),
+      supabase
+        .from('items')
+        .select('*, categories!inner(restaurant_id)')
+        .eq('categories.restaurant_id', resto.id),
     ])
 
     setRestaurant(resto)
@@ -40,20 +62,54 @@ export default function DashboardPage() {
   }, [router])
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        if (event === 'INITIAL_SESSION') {
-          if (!session) { router.push('/login'); return }
-          await loadData(session.user.id)
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'INITIAL_SESSION') {
+        if (!session) {
+          router.push('/login')
+          return
         }
+        await loadData(session.user.id)
       }
-    )
+    })
     return () => subscription.unsubscribe()
   }, [router, loadData])
 
   const handleLogout = async () => {
     await supabase.auth.signOut()
     router.push('/login')
+  }
+
+  const startEditingName = () => {
+    setNameInput(restaurant?.name || '')
+    setEditingName(true)
+  }
+
+  const cancelEditingName = () => {
+    setEditingName(false)
+    setNameInput('')
+  }
+
+  const handleSaveName = async () => {
+    if (!restaurant || !nameInput.trim()) return
+    setSavingName(true)
+    const { data, error } = await supabase
+      .from('restaurants')
+      .update({ name: nameInput.trim() })
+      .eq('id', restaurant.id)
+      .select()
+      .single()
+    if (!error && data) {
+      setRestaurant(data)
+    }
+    setSavingName(false)
+    setEditingName(false)
+  }
+
+  const handleNameKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') handleSaveName()
+    if (e.key === 'Escape') cancelEditingName()
   }
 
   if (loading) return (
@@ -63,11 +119,11 @@ export default function DashboardPage() {
         <p className="load-text">Chargement…</p>
       </div>
       <style jsx>{`
-        .load-screen { min-height: 100vh; background: #000; display: flex; align-items: center; justify-content: center; font-family: 'Inter', sans-serif; }
-        .load-inner { display: flex; flex-direction: column; align-items: center; gap: 14px; }
-        .load-spinner { width: 36px; height: 36px; border-radius: 50%; border: 2px solid rgba(255,107,53,0.2); border-top-color: #FF6B35; animation: spin 0.8s linear infinite; }
-        .load-text { font-size: 13px; color: rgba(255,255,255,0.3); }
-        @keyframes spin { to { transform: rotate(360deg); } }
+        .load-screen { min-height:100vh; background:#000; display:flex; align-items:center; justify-content:center; font-family:'Inter',sans-serif; }
+        .load-inner { display:flex; flex-direction:column; align-items:center; gap:14px; }
+        .load-spinner { width:36px; height:36px; border-radius:50%; border:2px solid rgba(255,107,53,0.2); border-top-color:#FF6B35; animation:spin 0.8s linear infinite; }
+        .load-text { font-size:13px; color:rgba(255,255,255,0.3); }
+        @keyframes spin { to { transform:rotate(360deg); } }
       `}</style>
     </div>
   )
@@ -97,7 +153,9 @@ export default function DashboardPage() {
             </div>
             <button onClick={handleLogout} className="logout-btn">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                <polyline points="16 17 21 12 16 7" />
+                <line x1="21" y1="12" x2="9" y2="12" />
               </svg>
               Déconnexion
             </button>
@@ -111,11 +169,64 @@ export default function DashboardPage() {
         <div className="dash-header">
           <div>
             <h1 className="dash-h1">Bonjour 👋</h1>
-            <p className="dash-sub">Gérez le menu de <span className="dash-resto">{restaurant?.name}</span></p>
+
+            {editingName ? (
+              <div className="name-edit-row">
+                <span className="dash-sub-prefix">Gérez le menu de&nbsp;</span>
+                <input
+                  autoFocus
+                  value={nameInput}
+                  onChange={e => setNameInput(e.target.value)}
+                  onKeyDown={handleNameKeyDown}
+                  className="name-input"
+                  placeholder="Nom du restaurant"
+                  disabled={savingName}
+                />
+                <button
+                  onClick={handleSaveName}
+                  disabled={savingName || !nameInput.trim()}
+                  className="name-btn name-btn-confirm"
+                  title="Enregistrer (Entrée)"
+                >
+                  {savingName ? (
+                    <span className="mini-spinner" />
+                  ) : (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                  )}
+                </button>
+                <button
+                  onClick={cancelEditingName}
+                  className="name-btn name-btn-cancel"
+                  title="Annuler (Échap)"
+                  disabled={savingName}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              </div>
+            ) : (
+              <p className="dash-sub">
+                Gérez le menu de&nbsp;
+                <button onClick={startEditingName} className="dash-resto-btn" title="Cliquer pour modifier le nom">
+                  {restaurant?.name}
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="edit-icon">
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                  </svg>
+                </button>
+              </p>
+            )}
           </div>
+
           <Link href={`/menu/${restaurant?.slug}`} target="_blank" className="preview-btn">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+              <polyline points="15 3 21 3 21 9" />
+              <line x1="10" y1="14" x2="21" y2="3" />
             </svg>
             Voir le menu
           </Link>
@@ -141,13 +252,12 @@ export default function DashboardPage() {
         {/* ── Quick actions ── */}
         <div className="actions-grid">
 
-          {/* Catégories */}
           <Link href="/dashboard/categories" className="action-card">
             <div className="action-top">
               <div className="action-icon-wrap action-amber">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
-                  <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+                  <line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" /><line x1="8" y1="18" x2="21" y2="18" />
+                  <line x1="3" y1="6" x2="3.01" y2="6" /><line x1="3" y1="12" x2="3.01" y2="12" /><line x1="3" y1="18" x2="3.01" y2="18" />
                 </svg>
               </div>
               <span className="action-arrow">→</span>
@@ -157,13 +267,12 @@ export default function DashboardPage() {
             <div className="action-count">{categories.length} catégorie{categories.length !== 1 ? 's' : ''}</div>
           </Link>
 
-          {/* Plats */}
           <Link href="/dashboard/items" className="action-card">
             <div className="action-top">
               <div className="action-icon-wrap action-orange">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/>
-                  <line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/>
+                  <path d="M18 8h1a4 4 0 0 1 0 8h-1" /><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z" />
+                  <line x1="6" y1="1" x2="6" y2="4" /><line x1="10" y1="1" x2="10" y2="4" /><line x1="14" y1="1" x2="14" y2="4" />
                 </svg>
               </div>
               <span className="action-arrow">→</span>
@@ -173,13 +282,12 @@ export default function DashboardPage() {
             <div className="action-count">{items.length} plat{items.length !== 1 ? 's' : ''}</div>
           </Link>
 
-          {/* QR Code */}
           <Link href="/dashboard/qrcode" className="action-card">
             <div className="action-top">
               <div className="action-icon-wrap action-rose">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
-                  <rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="3" height="3"/>
+                  <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" />
+                  <rect x="3" y="14" width="7" height="7" /><rect x="14" y="14" width="3" height="3" />
                 </svg>
               </div>
               <span className="action-arrow">→</span>
@@ -189,13 +297,12 @@ export default function DashboardPage() {
             <div className="action-count">1 code unique</div>
           </Link>
 
-          {/* Voir menu public */}
           <Link href={`/menu/${restaurant?.slug}`} target="_blank" className="action-card action-card-hot">
             <div className="action-top">
               <div className="action-icon-wrap action-violet">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="5" y="2" width="14" height="20" rx="2" ry="2"/>
-                  <line x1="12" y1="18" x2="12.01" y2="18"/>
+                  <rect x="5" y="2" width="14" height="20" rx="2" ry="2" />
+                  <line x1="12" y1="18" x2="12.01" y2="18" />
                 </svg>
               </div>
               <span className="action-arrow">↗</span>
@@ -250,95 +357,146 @@ export default function DashboardPage() {
       </div>
 
       <style jsx>{`
-        .dash-root { min-height: 100vh; background: #000; font-family: 'Inter', -apple-system, sans-serif; position: relative; overflow-x: hidden; }
+        .dash-root { min-height:100vh; background:#000; font-family:'Inter',-apple-system,sans-serif; position:relative; overflow-x:hidden; }
 
-        .dash-bg { position: fixed; inset: 0; pointer-events: none; z-index: 0; }
-        .dash-orb { position: absolute; border-radius: 50%; filter: blur(130px); opacity: 0.12; }
-        .dash-orb-1 { width: 600px; height: 600px; background: radial-gradient(circle, #FF6B35, transparent 70%); top: -200px; left: -200px; }
-        .dash-orb-2 { width: 500px; height: 500px; background: radial-gradient(circle, #9B59B6, transparent 70%); bottom: -150px; right: -150px; }
+        .dash-bg { position:fixed; inset:0; pointer-events:none; z-index:0; }
+        .dash-orb { position:absolute; border-radius:50%; filter:blur(130px); opacity:0.12; }
+        .dash-orb-1 { width:600px; height:600px; background:radial-gradient(circle,#FF6B35,transparent 70%); top:-200px; left:-200px; }
+        .dash-orb-2 { width:500px; height:500px; background:radial-gradient(circle,#9B59B6,transparent 70%); bottom:-150px; right:-150px; }
         .dash-grid {
-          position: absolute; inset: 0;
-          background-image: linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
-          background-size: 60px 60px;
+          position:absolute; inset:0;
+          background-image:linear-gradient(rgba(255,255,255,0.02) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,0.02) 1px,transparent 1px);
+          background-size:60px 60px;
         }
 
-        .dash-nav { position: sticky; top: 0; z-index: 40; border-bottom: 1px solid rgba(255,255,255,0.07); background: rgba(0,0,0,0.8); backdrop-filter: blur(20px); }
-        .dash-nav-inner { max-width: 1200px; margin: 0 auto; padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; }
-        .logo { font-size: 20px; font-weight: 800; letter-spacing: -0.5px; color: #fff; text-decoration: none; }
-        .logo-accent { background: linear-gradient(90deg, #FF6B35, #FFA552, #C8933A, #9B59B6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
-        .nav-right { display: flex; align-items: center; gap: 16px; }
-        .resto-pill { display: flex; align-items: center; gap: 7px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.09); border-radius: 100px; padding: 6px 14px; font-size: 13px; font-weight: 500; color: rgba(255,255,255,0.65); }
-        .resto-dot { width: 6px; height: 6px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 6px #22c55e; }
-        .logout-btn { display: flex; align-items: center; gap: 6px; background: none; border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 7px 14px; font-size: 13px; color: rgba(255,255,255,0.35); cursor: pointer; transition: color 0.2s, border-color 0.2s; font-family: inherit; }
-        .logout-btn:hover { color: rgba(255,255,255,0.7); border-color: rgba(255,255,255,0.15); }
+        /* ── Navbar ── */
+        .dash-nav { position:sticky; top:0; z-index:40; border-bottom:1px solid rgba(255,255,255,0.07); background:rgba(0,0,0,0.8); backdrop-filter:blur(20px); }
+        .dash-nav-inner { max-width:1200px; margin:0 auto; padding:16px 24px; display:flex; align-items:center; justify-content:space-between; }
+        .logo { font-size:20px; font-weight:800; letter-spacing:-0.5px; color:#fff; text-decoration:none; }
+        .logo-accent { background:linear-gradient(90deg,#FF6B35,#FFA552,#C8933A,#9B59B6); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
+        .nav-right { display:flex; align-items:center; gap:16px; }
+        .resto-pill { display:flex; align-items:center; gap:7px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.09); border-radius:100px; padding:6px 14px; font-size:13px; font-weight:500; color:rgba(255,255,255,0.65); }
+        .resto-dot { width:6px; height:6px; border-radius:50%; background:#22c55e; box-shadow:0 0 6px #22c55e; }
+        .logout-btn { display:flex; align-items:center; gap:6px; background:none; border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:7px 14px; font-size:13px; color:rgba(255,255,255,0.35); cursor:pointer; transition:color 0.2s,border-color 0.2s; font-family:inherit; }
+        .logout-btn:hover { color:rgba(255,255,255,0.7); border-color:rgba(255,255,255,0.15); }
 
-        .dash-content { position: relative; z-index: 1; max-width: 1200px; margin: 0 auto; padding: 48px 24px 80px; }
+        /* ── Content ── */
+        .dash-content { position:relative; z-index:1; max-width:1200px; margin:0 auto; padding:48px 24px 80px; }
 
-        .dash-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 40px; gap: 16px; flex-wrap: wrap; }
-        .dash-h1 { font-size: 32px; font-weight: 800; letter-spacing: -1px; color: #fff; margin-bottom: 6px; }
-        .dash-sub { font-size: 15px; color: rgba(255,255,255,0.38); }
-        .dash-resto { background: linear-gradient(90deg, #FF6B35, #C8933A); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; font-weight: 600; }
-        .preview-btn { display: flex; align-items: center; gap: 7px; text-decoration: none; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 10px 18px; font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.6); transition: all 0.2s; white-space: nowrap; }
-        .preview-btn:hover { border-color: rgba(255,107,53,0.35); color: #fff; background: rgba(255,107,53,0.06); }
+        /* ── Header ── */
+        .dash-header { display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:40px; gap:16px; flex-wrap:wrap; }
+        .dash-h1 { font-size:32px; font-weight:800; letter-spacing:-1px; color:#fff; margin-bottom:8px; }
+        .dash-sub { font-size:15px; color:rgba(255,255,255,0.38); display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
 
-        .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 28px; }
-        .stat-card { position: relative; overflow: hidden; border: 1px solid rgba(255,255,255,0.07); background: rgba(255,255,255,0.03); border-radius: 20px; padding: 22px 20px; transition: border-color 0.3s, transform 0.2s; }
-        .stat-card:hover { transform: translateY(-2px); border-color: rgba(255,255,255,0.12); }
-        .stat-icon { font-size: 18px; margin-bottom: 12px; }
-        .stat-value { font-size: 38px; font-weight: 800; letter-spacing: -1.5px; line-height: 1; margin-bottom: 6px; }
-        .stat-label { font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: rgba(255,255,255,0.3); }
-        .stat-bar { position: absolute; bottom: 0; left: 0; right: 0; height: 2px; }
+        /* Editable name button */
+        .dash-resto-btn {
+          display:inline-flex; align-items:center; gap:5px;
+          background:none; border:none; cursor:pointer; padding:0;
+          font-size:15px; font-weight:600; font-family:inherit;
+          background:linear-gradient(90deg,#FF6B35,#C8933A);
+          -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
+          transition:opacity 0.2s;
+        }
+        .dash-resto-btn:hover { opacity:0.75; }
+        .edit-icon { flex-shrink:0; color:#C8933A; -webkit-text-fill-color:initial; opacity:0.55; transition:opacity 0.2s; }
+        .dash-resto-btn:hover .edit-icon { opacity:1; }
 
-        .actions-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 40px; }
-        .action-card { display: block; text-decoration: none; border: 1px solid rgba(255,255,255,0.07); background: rgba(255,255,255,0.03); border-radius: 20px; padding: 24px; transition: all 0.3s; }
-        .action-card:hover { border-color: rgba(255,255,255,0.14); background: rgba(255,255,255,0.055); transform: translateY(-3px); }
-        .action-card-hot { border-color: rgba(255,107,53,0.2); background: rgba(255,107,53,0.04); }
-        .action-card-hot:hover { border-color: rgba(255,107,53,0.35); background: rgba(255,107,53,0.08); }
-        .action-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-        .action-icon-wrap { width: 44px; height: 44px; border-radius: 14px; display: flex; align-items: center; justify-content: center; }
-        .action-amber { background: rgba(200,147,58,0.12); color: #C8933A; border: 1px solid rgba(200,147,58,0.2); }
-        .action-orange { background: rgba(255,107,53,0.12); color: #FF6B35; border: 1px solid rgba(255,107,53,0.2); }
-        .action-violet { background: rgba(155,89,182,0.12); color: #9B59B6; border: 1px solid rgba(155,89,182,0.2); }
-        .action-rose { background: rgba(224,86,193,0.12); color: #E056C1; border: 1px solid rgba(224,86,193,0.2); }
-        .action-arrow { font-size: 18px; color: rgba(255,255,255,0.2); transition: transform 0.2s, color 0.2s; }
-        .action-card:hover .action-arrow { transform: translate(2px, -2px); color: rgba(255,255,255,0.5); }
-        .action-title { font-size: 16px; font-weight: 700; color: #fff; margin-bottom: 6px; }
-        .action-desc { font-size: 13px; color: rgba(255,255,255,0.35); margin-bottom: 14px; line-height: 1.5; }
-        .action-count { font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.25); }
-        .action-live { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: #22c55e; }
-        .live-dot { width: 6px; height: 6px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 6px #22c55e; animation: pulse 2s infinite; }
+        /* Inline name edit row */
+        .name-edit-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:2px; }
+        .dash-sub-prefix { font-size:15px; color:rgba(255,255,255,0.38); }
+        .name-input {
+          background:rgba(255,255,255,0.06);
+          border:1px solid rgba(255,107,53,0.45);
+          border-radius:10px;
+          padding:6px 12px;
+          color:#fff;
+          font-size:15px;
+          font-weight:600;
+          font-family:inherit;
+          outline:none;
+          transition:border-color 0.2s, box-shadow 0.2s;
+          min-width:180px;
+        }
+        .name-input:focus { border-color:rgba(255,107,53,0.8); box-shadow:0 0 0 3px rgba(255,107,53,0.12); }
+        .name-input:disabled { opacity:0.5; }
+        .name-btn {
+          display:flex; align-items:center; justify-content:center;
+          width:32px; height:32px; border-radius:9px;
+          border:1px solid transparent; cursor:pointer; flex-shrink:0;
+          transition:all 0.2s; font-family:inherit;
+        }
+        .name-btn:disabled { opacity:0.4; cursor:not-allowed; }
+        .name-btn-confirm { background:rgba(34,197,94,0.12); border-color:rgba(34,197,94,0.25); color:#22c55e; }
+        .name-btn-confirm:hover:not(:disabled) { background:rgba(34,197,94,0.2); border-color:rgba(34,197,94,0.45); }
+        .name-btn-cancel { background:rgba(255,255,255,0.04); border-color:rgba(255,255,255,0.1); color:rgba(255,255,255,0.35); }
+        .name-btn-cancel:hover:not(:disabled) { background:rgba(255,255,255,0.08); color:rgba(255,255,255,0.6); }
+        .mini-spinner { width:12px; height:12px; border-radius:50%; border:2px solid rgba(34,197,94,0.2); border-top-color:#22c55e; animation:spin 0.7s linear infinite; display:inline-block; }
 
-        .empty-state { border: 1px dashed rgba(255,255,255,0.1); border-radius: 24px; padding: 72px 40px; text-align: center; }
-        .empty-icon { font-size: 48px; margin-bottom: 20px; }
-        .empty-title { font-size: 20px; font-weight: 700; color: #fff; margin-bottom: 10px; }
-        .empty-sub { font-size: 14px; color: rgba(255,255,255,0.35); margin-bottom: 28px; max-width: 340px; margin-left: auto; margin-right: auto; line-height: 1.6; }
-        .empty-btn { display: inline-block; text-decoration: none; background: linear-gradient(135deg, #FF6B35, #C8933A, #9B59B6); color: #fff; font-size: 14px; font-weight: 700; padding: 13px 28px; border-radius: 14px; box-shadow: 0 6px 24px rgba(255,107,53,0.35); transition: transform 0.2s, box-shadow 0.2s; }
-        .empty-btn:hover { transform: translateY(-2px); box-shadow: 0 10px 32px rgba(255,107,53,0.45); }
+        .preview-btn { display:flex; align-items:center; gap:7px; text-decoration:none; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); border-radius:12px; padding:10px 18px; font-size:13px; font-weight:600; color:rgba(255,255,255,0.6); transition:all 0.2s; white-space:nowrap; }
+        .preview-btn:hover { border-color:rgba(255,107,53,0.35); color:#fff; background:rgba(255,107,53,0.06); }
 
-        .recent-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-        .recent-title { font-size: 18px; font-weight: 700; color: #fff; }
-        .recent-link { font-size: 13px; color: rgba(255,255,255,0.35); text-decoration: none; transition: color 0.2s; }
-        .recent-link:hover { color: #FF8C42; }
-        .recent-list { border: 1px solid rgba(255,255,255,0.07); background: rgba(255,255,255,0.02); border-radius: 20px; overflow: hidden; }
-        .recent-item { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; transition: background 0.2s; }
-        .recent-item:hover { background: rgba(255,255,255,0.03); }
-        .recent-item-border { border-top: 1px solid rgba(255,255,255,0.05); }
-        .recent-item-left { display: flex; align-items: center; gap: 14px; }
-        .recent-item-avatar { width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0; background: linear-gradient(135deg, rgba(255,107,53,0.15), rgba(155,89,182,0.15)); border: 1px solid rgba(255,107,53,0.2); display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; color: #FF8C42; }
-        .recent-item-name { font-size: 14px; font-weight: 600; color: #fff; margin-bottom: 2px; }
-        .recent-item-desc { font-size: 12px; color: rgba(255,255,255,0.28); }
-        .recent-item-right { display: flex; align-items: center; gap: 10px; }
-        .recent-price { font-size: 13px; font-weight: 700; background: linear-gradient(90deg, #FF6B35, #C8933A); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
-        .avail-badge { font-size: 11px; font-weight: 600; padding: 4px 12px; border-radius: 100px; }
-        .avail-yes { background: rgba(34,197,94,0.1); color: #22c55e; border: 1px solid rgba(34,197,94,0.2); }
-        .avail-no { background: rgba(255,255,255,0.04); color: rgba(255,255,255,0.25); border: 1px solid rgba(255,255,255,0.07); }
+        /* ── Stats ── */
+        .stats-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:28px; }
+        .stat-card { position:relative; overflow:hidden; border:1px solid rgba(255,255,255,0.07); background:rgba(255,255,255,0.03); border-radius:20px; padding:22px 20px; transition:border-color 0.3s,transform 0.2s; }
+        .stat-card:hover { transform:translateY(-2px); border-color:rgba(255,255,255,0.12); }
+        .stat-icon { font-size:18px; margin-bottom:12px; }
+        .stat-value { font-size:38px; font-weight:800; letter-spacing:-1.5px; line-height:1; margin-bottom:6px; }
+        .stat-label { font-size:11px; font-weight:600; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.3); }
+        .stat-bar { position:absolute; bottom:0; left:0; right:0; height:2px; }
 
-        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
-        @keyframes spin { to { transform: rotate(360deg); } }
+        /* ── Actions ── */
+        .actions-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:40px; }
+        .action-card { display:block; text-decoration:none; border:1px solid rgba(255,255,255,0.07); background:rgba(255,255,255,0.03); border-radius:20px; padding:24px; transition:all 0.3s; }
+        .action-card:hover { border-color:rgba(255,255,255,0.14); background:rgba(255,255,255,0.055); transform:translateY(-3px); }
+        .action-card-hot { border-color:rgba(255,107,53,0.2); background:rgba(255,107,53,0.04); }
+        .action-card-hot:hover { border-color:rgba(255,107,53,0.35); background:rgba(255,107,53,0.08); }
+        .action-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
+        .action-icon-wrap { width:44px; height:44px; border-radius:14px; display:flex; align-items:center; justify-content:center; }
+        .action-amber { background:rgba(200,147,58,0.12); color:#C8933A; border:1px solid rgba(200,147,58,0.2); }
+        .action-orange { background:rgba(255,107,53,0.12); color:#FF6B35; border:1px solid rgba(255,107,53,0.2); }
+        .action-violet { background:rgba(155,89,182,0.12); color:#9B59B6; border:1px solid rgba(155,89,182,0.2); }
+        .action-rose { background:rgba(224,86,193,0.12); color:#E056C1; border:1px solid rgba(224,86,193,0.2); }
+        .action-arrow { font-size:18px; color:rgba(255,255,255,0.2); transition:transform 0.2s,color 0.2s; }
+        .action-card:hover .action-arrow { transform:translate(2px,-2px); color:rgba(255,255,255,0.5); }
+        .action-title { font-size:16px; font-weight:700; color:#fff; margin-bottom:6px; }
+        .action-desc { font-size:13px; color:rgba(255,255,255,0.35); margin-bottom:14px; line-height:1.5; }
+        .action-count { font-size:12px; font-weight:600; color:rgba(255,255,255,0.25); }
+        .action-live { display:flex; align-items:center; gap:6px; font-size:12px; font-weight:600; color:#22c55e; }
+        .live-dot { width:6px; height:6px; border-radius:50%; background:#22c55e; box-shadow:0 0 6px #22c55e; animation:pulse 2s infinite; }
 
-        @media (max-width: 1100px) { .actions-grid { grid-template-columns: repeat(2, 1fr); } }
-        @media (max-width: 900px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } .dash-header { flex-direction: column; gap: 12px; } }
-        @media (max-width: 560px) { .actions-grid { grid-template-columns: 1fr; } .recent-item-right { flex-direction: column; align-items: flex-end; gap: 6px; } .dash-content { padding: 32px 16px 60px; } }
+        /* ── Empty ── */
+        .empty-state { border:1px dashed rgba(255,255,255,0.1); border-radius:24px; padding:72px 40px; text-align:center; }
+        .empty-icon { font-size:48px; margin-bottom:20px; }
+        .empty-title { font-size:20px; font-weight:700; color:#fff; margin-bottom:10px; }
+        .empty-sub { font-size:14px; color:rgba(255,255,255,0.35); margin-bottom:28px; max-width:340px; margin-left:auto; margin-right:auto; line-height:1.6; }
+        .empty-btn { display:inline-block; text-decoration:none; background:linear-gradient(135deg,#FF6B35,#C8933A,#9B59B6); color:#fff; font-size:14px; font-weight:700; padding:13px 28px; border-radius:14px; box-shadow:0 6px 24px rgba(255,107,53,0.35); transition:transform 0.2s,box-shadow 0.2s; }
+        .empty-btn:hover { transform:translateY(-2px); box-shadow:0 10px 32px rgba(255,107,53,0.45); }
+
+        /* ── Recent ── */
+        .recent-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
+        .recent-title { font-size:18px; font-weight:700; color:#fff; }
+        .recent-link { font-size:13px; color:rgba(255,255,255,0.35); text-decoration:none; transition:color 0.2s; }
+        .recent-link:hover { color:#FF8C42; }
+        .recent-list { border:1px solid rgba(255,255,255,0.07); background:rgba(255,255,255,0.02); border-radius:20px; overflow:hidden; }
+        .recent-item { display:flex; align-items:center; justify-content:space-between; padding:16px 20px; transition:background 0.2s; }
+        .recent-item:hover { background:rgba(255,255,255,0.03); }
+        .recent-item-border { border-top:1px solid rgba(255,255,255,0.05); }
+        .recent-item-left { display:flex; align-items:center; gap:14px; }
+        .recent-item-avatar { width:36px; height:36px; border-radius:10px; flex-shrink:0; background:linear-gradient(135deg,rgba(255,107,53,0.15),rgba(155,89,182,0.15)); border:1px solid rgba(255,107,53,0.2); display:flex; align-items:center; justify-content:center; font-size:14px; font-weight:700; color:#FF8C42; }
+        .recent-item-name { font-size:14px; font-weight:600; color:#fff; margin-bottom:2px; }
+        .recent-item-desc { font-size:12px; color:rgba(255,255,255,0.28); }
+        .recent-item-right { display:flex; align-items:center; gap:10px; }
+        .recent-price { font-size:13px; font-weight:700; background:linear-gradient(90deg,#FF6B35,#C8933A); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
+        .avail-badge { font-size:11px; font-weight:600; padding:4px 12px; border-radius:100px; }
+        .avail-yes { background:rgba(34,197,94,0.1); color:#22c55e; border:1px solid rgba(34,197,94,0.2); }
+        .avail-no { background:rgba(255,255,255,0.04); color:rgba(255,255,255,0.25); border:1px solid rgba(255,255,255,0.07); }
+
+        @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+        @keyframes spin { to { transform:rotate(360deg); } }
+
+        @media (max-width:1100px) { .actions-grid { grid-template-columns:repeat(2,1fr); } }
+        @media (max-width:900px) { .stats-grid { grid-template-columns:repeat(2,1fr); } .dash-header { flex-direction:column; gap:12px; } }
+        @media (max-width:560px) { .actions-grid { grid-template-columns:1fr; } .recent-item-right { flex-direction:column; align-items:flex-end; gap:6px; } .dash-content { padding:32px 16px 60px; } .name-edit-row { gap:6px; } .name-input { min-width:140px; } }
       `}</style>
     </div>
   )
