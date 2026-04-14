@@ -4,10 +4,6 @@ import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { getHomeStats } from '@/lib/stats'
 
-const { restaurantCount, countryCount, satisfaction } = await getHomeStats()
-
-
-
 // ─── Floating QR mock ────────────────────────────────────────────────────────
 function QRMock() {
   return (
@@ -57,7 +53,6 @@ function Counter({ end, label }: { end: number; label: string }) {
 
   return (
     <div ref={ref} className="counter">
-      {/* Reserve space so layout doesn't jump; show dash until animated */}
       <div className="counter-val" style={{ opacity: val === null ? 0 : 1, transition: 'opacity 0.2s' }}>
         {val ?? end}+
       </div>
@@ -112,15 +107,30 @@ function PricingCard({
   )
 }
 
+// ─── Default stats (shown while loading) ──────────────────────────────────────
+const DEFAULT_STATS = { restaurantCount: 0, countryCount: 0, satisfaction: 0 }
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function HomePage() {
   const [scrolled, setScrolled] = useState(false)
+  const [stats, setStats] = useState(DEFAULT_STATS)
+
+  // ✅ FIX: fetch stats inside useEffect — never at top-level in a Client Component
+  useEffect(() => {
+    getHomeStats()
+      .then((data) => setStats(data))
+      .catch(() => {
+        // Silently keep default values if the fetch fails
+      })
+  }, [])
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 40)
     window.addEventListener('scroll', onScroll, { passive: true })
     return () => window.removeEventListener('scroll', onScroll)
   }, [])
+
+  const { restaurantCount, countryCount, satisfaction } = stats
 
   return (
     <div className="root">
@@ -153,8 +163,6 @@ export default function HomePage() {
         <div className="hero-content">
           {/* Left */}
           <div className="hero-left">
-            
-
             <h1 className="hero-h1">
               Votre menu,
               <br />
@@ -180,7 +188,7 @@ export default function HomePage() {
               <div className="stats-sep" />
               <Counter end={countryCount} label="Pays" />
               <div className="stats-sep" />
-              <Counter end={satisfaction}label="Satisfaction" />
+              <Counter end={satisfaction} label="Satisfaction" />
             </div>
           </div>
 
@@ -334,7 +342,7 @@ export default function HomePage() {
       <footer className="footer">
         <div className="footer-inner">
           <span className="logo">Menu<span className="logo-accent">Digital</span></span>
-          <p className="footer-copy">© 2026 MenuDigital —  Tunisie & MENA</p>
+          <p className="footer-copy">© 2026 MenuDigital — Tunisie & MENA</p>
         </div>
       </footer>
 
